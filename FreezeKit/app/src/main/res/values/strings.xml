@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FreezeKit</string>
+    <string name="admin_description">Receptor administrativo do FreezeKit</string>
+    <string name="status_title">Painel de status</string>
+    <string name="app_version_label">Versão do app</string>
+    <string name="android_version_label">Android</string>
+    <string name="device_owner_label">Device Owner</string>
+    <string name="efrp_label">EFRP</string>
+    <string name="refresh_button">Atualizar</string>
+</resources>
