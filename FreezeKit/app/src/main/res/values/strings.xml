@@ -2,17 +2,6 @@
 <resources>
     <string name="app_name">FreezeKit</string>
     <string name="admin_description">Receptor administrativo do FreezeKit</string>
-    <string name="status_title">Painel de status</string>
-    <string name="app_version_label">Versão do app</string>
-    <string name="android_version_label">Android</string>
-    <string name="device_owner_label">Device Owner</string>
-    <string name="efrp_label">EFRP</string>
-    <string name="refresh_button">Atualizar</string>
     <string name="blocked_address_notice">Endereço não permitido</string>
     <string name="offline_message">Sem conexão com a internet</string>
-    <string name="test_google_button">Testar bloqueio do Google</string>
-    <string name="test_subdomain_button">Testar bloqueio do subdomínio</string>
-    <string name="enter_kiosk_dev_button">Entrar no quiosque (DEV)</string>
-    <string name="exit_kiosk_dev_button">Sair do quiosque (DEV)</string>
-    <string name="kiosk_requires_device_owner">Não foi possível entrar no quiosque. Verifique o Device Owner e a autorização Lock Task.</string>
 </resources>

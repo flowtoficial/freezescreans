@@ -13,8 +13,8 @@ android {
         applicationId = "freezekit.capitaldascestas"
         minSdk = 30
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3"
+        versionCode = 4
+        versionName = "0.4"
     }
 
     compileOptions {
@@ -27,4 +27,8 @@ kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
     }
+}
+
+dependencies {
+    implementation("com.google.zxing:core:3.5.4")
 }

@@ -15,6 +15,8 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -29,15 +31,22 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.CookieManager
+import android.webkit.WebStorage
+import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import freezekit.capitaldascestas.config.BrowserConfig
 import freezekit.capitaldascestas.kiosk.KioskManager
+import freezekit.capitaldascestas.security.SecurityStore
 import freezekit.capitaldascestas.web.BrowserUrlPolicy
 import java.io.ByteArrayInputStream
+import java.lang.ref.WeakReference
+import java.security.SecureRandom
 
 class MainActivity : Activity() {
     private lateinit var config: BrowserConfig
@@ -53,9 +62,19 @@ class MainActivity : Activity() {
     private var retryUrl: String? = null
     private var pendingCameraRequest: PermissionRequest? = null
     private var backInvokedCallback: OnBackInvokedCallback? = null
+    private var tapCount = 0
+    private var firstTapEventTime = 0L
+    private var activePointerId = MotionEvent.INVALID_POINTER_ID
+    private var pointerDownInCorner = false
+    private var pointerMovedTooFar = false
+    private var pointerDownX = 0f
+    private var pointerDownY = 0f
+    private var suppressSetupWizardOnResume = false
+    private var setupTestOverlay: View? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        activeActivity = WeakReference(this)
 
         config = BrowserConfig(this)
         urlPolicy = BrowserUrlPolicy(config)
@@ -93,7 +112,11 @@ class MainActivity : Activity() {
         registerBackCallbackForAndroid13AndAbove()
         hideSystemBars()
         loadUrlIfAllowed(config.initialUrl)
-        handleRequestedUrl(intent)
+        val testToken = intent.getLongExtra(EXTRA_SETUP_TEST_TOKEN, 0L)
+        if (intent.action == ACTION_SETUP_TEST && consumeSetupTestToken(testToken)) {
+            suppressSetupWizardOnResume = true
+            showSetupTestOverlay()
+        }
     }
 
     override fun onStart() {
@@ -107,9 +130,17 @@ class MainActivity : Activity() {
             webView.onResume()
             hideSystemBars()
             grantCameraPermissionIfDeviceOwner()
-            val kioskManager = KioskManager(this)
-            if (isDeviceOwner() && kioskManager.isKioskEnabled()) {
-                kioskManager.entrarNoQuiosque()
+            val kiosk = KioskManager(this)
+            kiosk.restoreLockTaskPackagesIfNeeded()
+            val owner = isDeviceOwner()
+            val securityStore = SecurityStore(this)
+            if (owner && kiosk.isKioskEnabled()) {
+                kiosk.entrarNoQuiosque()
+            }
+            if (suppressSetupWizardOnResume) {
+                suppressSetupWizardOnResume = false
+            } else if (owner && (!securityStore.isFirstRunComplete() || !securityStore.isTotpConfigured())) {
+                startActivity(Intent(this, SetupWizardActivity::class.java))
             }
         }
     }
@@ -129,6 +160,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         pendingCameraRequest?.deny()
         pendingCameraRequest = null
+        if (activeActivity?.get() === this) activeActivity = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             backInvokedCallback?.let {
                 onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it)
@@ -153,7 +185,25 @@ class MainActivity : Activity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleRequestedUrl(intent)
+        val testToken = intent.getLongExtra(EXTRA_SETUP_TEST_TOKEN, 0L)
+        if (intent.action == ACTION_SETUP_TEST && consumeSetupTestToken(testToken)) {
+            suppressSetupWizardOnResume = true
+            showSetupTestOverlay()
+        }
+    }
+
+    /** Observa o gesto e devolve exatamente o resultado do despacho normal do Android/WebView. */
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        val openAdmin = observeHiddenAdminGesture(event)
+        val dispatchedNormally = super.dispatchTouchEvent(event)
+        if (openAdmin) {
+            container.post {
+                if (!isFinishing && !isDestroyed && SecurityStore(this).isFirstRunComplete()) {
+                    startActivity(Intent(this, AccessCodeActivity::class.java))
+                }
+            }
+        }
+        return dispatchedNormally
     }
 
     @Deprecated("Deprecated in the Android SDK; handled to keep Back within the WebView")
@@ -321,12 +371,135 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun handleRequestedUrl(intent: Intent?) {
-        if (intent?.action != ACTION_REQUEST_URL) {
+    private fun observeHiddenAdminGesture(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                if (event.pointerCount != 1) {
+                    resetGesture()
+                    return false
+                }
+                if (tapCount > 0 && event.eventTime - firstTapEventTime > GESTURE_WINDOW_MS) {
+                    tapCount = 0
+                }
+                pointerDownX = event.getX(0)
+                pointerDownY = event.getY(0)
+                pointerDownInCorner = isInsideAdminCorner(pointerDownX, pointerDownY)
+                activePointerId = event.getPointerId(0)
+                pointerMovedTooFar = false
+                if (!pointerDownInCorner) resetGesture()
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val index = if (activePointerId == MotionEvent.INVALID_POINTER_ID) -1
+                    else event.findPointerIndex(activePointerId)
+                if (index < 0 || event.pointerCount != 1) {
+                    resetGesture()
+                } else {
+                    val dx = event.getX(index) - pointerDownX
+                    val dy = event.getY(index) - pointerDownY
+                    val slop = ViewConfiguration.get(this).scaledTouchSlop.toFloat()
+                    if (dx * dx + dy * dy > slop * slop ||
+                        !isInsideAdminCorner(event.getX(index), event.getY(index))
+                    ) {
+                        resetGesture()
+                    }
+                }
+            }
+            MotionEvent.ACTION_POINTER_DOWN,
+            MotionEvent.ACTION_POINTER_UP,
+            MotionEvent.ACTION_CANCEL,
+            MotionEvent.ACTION_OUTSIDE -> resetGesture()
+
+            MotionEvent.ACTION_UP -> {
+                val validTap = event.pointerCount == 1 &&
+                    activePointerId != MotionEvent.INVALID_POINTER_ID &&
+                    event.getPointerId(0) == activePointerId &&
+                    pointerDownInCorner && !pointerMovedTooFar &&
+                    isInsideAdminCorner(event.getX(0), event.getY(0))
+                activePointerId = MotionEvent.INVALID_POINTER_ID
+                pointerDownInCorner = false
+                pointerMovedTooFar = false
+                if (!validTap) {
+                    tapCount = 0
+                    return false
+                }
+                if (tapCount == 0 || event.eventTime - firstTapEventTime > GESTURE_WINDOW_MS) {
+                    tapCount = 0
+                    firstTapEventTime = event.eventTime
+                }
+                tapCount += 1
+                if (tapCount >= REQUIRED_GESTURE_TAPS) {
+                    resetGesture()
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private fun isInsideAdminCorner(x: Float, y: Float): Boolean {
+        val width = if (::container.isInitialized && container.width > 0) container.width
+            else window.decorView.width
+        if (width <= 0) return false
+        val areaPx = (80f * resources.displayMetrics.density + 0.5f).toInt()
+        return x >= width - areaPx && x <= width && y >= 0f && y <= areaPx
+    }
+
+    private fun resetGesture() {
+        tapCount = 0
+        activePointerId = MotionEvent.INVALID_POINTER_ID
+        pointerDownInCorner = false
+        pointerMovedTooFar = false
+    }
+
+    private fun showSetupTestOverlay() {
+        setupTestOverlay?.let(container::removeView)
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(UiSupport.dp(this@MainActivity, 8), UiSupport.dp(this@MainActivity, 4),
+                UiSupport.dp(this@MainActivity, 8), UiSupport.dp(this@MainActivity, 4))
+            setBackgroundColor(Color.WHITE)
+        }
+        val worked = UiSupport.button(this, "Funcionou") { finishConferTest(true) }
+        val failed = UiSupport.button(this, "Não funcionou") { finishConferTest(false) }
+        bar.addView(worked, LinearLayout.LayoutParams(0, UiSupport.dp(this, 48), 1f))
+        bar.addView(failed, LinearLayout.LayoutParams(0, UiSupport.dp(this, 48), 1f))
+        setupTestOverlay = bar
+        container.addView(
+            bar,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
+            )
+        )
+    }
+
+    private fun finishConferTest(passed: Boolean) {
+        SecurityStore(this).setConferTestPassed(passed)
+        setupTestOverlay?.let(container::removeView)
+        setupTestOverlay = null
+        startActivity(Intent(this, SetupWizardActivity::class.java))
+    }
+
+    private fun clearWebSession(onComplete: (Boolean) -> Unit) {
+        if (!::webView.isInitialized || isFinishing) {
+            onComplete(false)
             return
         }
-        val requestedUrl = intent.getStringExtra(EXTRA_REQUESTED_URL) ?: return
-        loadUrlIfAllowed(requestedUrl)
+        try {
+            webView.clearCache(true)
+            WebStorage.getInstance().deleteAllData()
+            CookieManager.getInstance().removeAllCookies { onComplete(true) }
+        } catch (_: Exception) {
+            onComplete(false)
+        }
+    }
+
+    private fun reloadConfiguredStartPage() {
+        if (!::webView.isInitialized || isFinishing) return
+        config = BrowserConfig(this)
+        urlPolicy = BrowserUrlPolicy(config)
+        loadUrlIfAllowed(config.initialUrl)
     }
 
     private fun showBlockedAddressNotice() {
@@ -377,12 +550,16 @@ class MainActivity : Activity() {
 
         val devicePolicyManager =
             getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-        devicePolicyManager.setPermissionGrantState(
-            ComponentName(this, AdminReceiver::class.java),
-            packageName,
-            Manifest.permission.CAMERA,
-            DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
-        )
+        try {
+            devicePolicyManager.setPermissionGrantState(
+                ComponentName(this, AdminReceiver::class.java),
+                packageName,
+                Manifest.permission.CAMERA,
+                DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
+            )
+        } catch (_: SecurityException) {
+            // Falha de concessão não deve derrubar o navegador; solicitações de vídeo continuam negadas.
+        }
     }
 
     private fun isDeviceOwner(): Boolean {
@@ -521,9 +698,56 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        const val ACTION_REQUEST_URL = "freezekit.capitaldascestas.action.REQUEST_URL"
-        const val EXTRA_REQUESTED_URL = "freezekit.capitaldascestas.extra.REQUESTED_URL"
+        const val ACTION_SETUP_TEST = "freezekit.capitaldascestas.action.SETUP_CONFER_TEST"
+        private const val EXTRA_SETUP_TEST_TOKEN = "freezekit.extra.SETUP_TEST_TOKEN"
 
         private const val CAMERA_PERMISSION_REQUEST_CODE = 201
+        private const val GESTURE_WINDOW_MS = 3_000L
+        private const val REQUIRED_GESTURE_TAPS = 7
+        @Volatile private var activeActivity: WeakReference<MainActivity>? = null
+        private var pendingSetupTestToken = 0L
+        private val setupTestRandom = SecureRandom()
+
+        @Synchronized
+        fun createSetupTestIntent(context: Context): Intent {
+            var token = 0L
+            while (token == 0L) token = setupTestRandom.nextLong()
+            pendingSetupTestToken = token
+            return Intent(context, MainActivity::class.java)
+                .setAction(ACTION_SETUP_TEST)
+                .putExtra(EXTRA_SETUP_TEST_TOKEN, token)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+
+        @Synchronized
+        private fun consumeSetupTestToken(token: Long): Boolean {
+            if (token == 0L || token != pendingSetupTestToken) return false
+            pendingSetupTestToken = 0L
+            return true
+        }
+
+        fun clearActiveWebSession(requester: Activity, onComplete: (Boolean) -> Unit) {
+            val activity = activeActivity?.get()
+            if (activity != null && !activity.isFinishing) {
+                activity.runOnUiThread { activity.clearWebSession(onComplete) }
+                return
+            }
+            requester.runOnUiThread {
+                try {
+                    val temporaryWebView = WebView(requester)
+                    temporaryWebView.clearCache(true)
+                    temporaryWebView.destroy()
+                    WebStorage.getInstance().deleteAllData()
+                    CookieManager.getInstance().removeAllCookies { onComplete(true) }
+                } catch (_: Exception) {
+                    onComplete(false)
+                }
+            }
+        }
+
+        fun reloadConfiguredStartPage() {
+            val activity = activeActivity?.get() ?: return
+            activity.runOnUiThread { activity.reloadConfiguredStartPage() }
+        }
     }
 }
