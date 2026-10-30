@@ -8,4 +8,8 @@
     <string name="device_owner_label">Device Owner</string>
     <string name="efrp_label">EFRP</string>
     <string name="refresh_button">Atualizar</string>
+    <string name="blocked_address_notice">Endereço não permitido</string>
+    <string name="offline_message">Sem conexão com a internet</string>
+    <string name="test_google_button">Testar bloqueio do Google</string>
+    <string name="test_subdomain_button">Testar bloqueio do subdomínio</string>
 </resources>
