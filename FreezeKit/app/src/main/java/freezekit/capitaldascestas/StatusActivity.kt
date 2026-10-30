@@ -15,6 +15,8 @@ import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import freezekit.capitaldascestas.kiosk.KioskManager
 
 class StatusActivity : Activity() {
     private lateinit var appVersionText: TextView
@@ -76,6 +78,20 @@ class StatusActivity : Activity() {
             }
         }
         root.addView(subdomainTestButton, rowLayoutParams(0))
+
+        val enterKioskButton = Button(this).apply {
+            text = getString(R.string.enter_kiosk_dev_button)
+            isAllCaps = false
+            setOnClickListener { enterKioskForDevelopment() }
+        }
+        root.addView(enterKioskButton, rowLayoutParams(12))
+
+        val exitKioskButton = Button(this).apply {
+            text = getString(R.string.exit_kiosk_dev_button)
+            isAllCaps = false
+            setOnClickListener { exitKioskForDevelopment() }
+        }
+        root.addView(exitKioskButton, rowLayoutParams(0))
 
         setContentView(root)
         updateStatus()
@@ -142,6 +158,60 @@ class StatusActivity : Activity() {
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         }
         startActivity(intent)
+    }
+
+    private fun enterKioskForDevelopment() {
+        if (!KioskManager(this).entrarNoQuiosque()) {
+            Toast.makeText(
+                this,
+                getString(R.string.kiosk_requires_device_owner),
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    private fun exitKioskForDevelopment() {
+        if (!KioskManager(this).sairDoQuiosque()) {
+            Toast.makeText(
+                this,
+                getString(R.string.kiosk_requires_device_owner),
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            addCategory(Intent.CATEGORY_DEFAULT)
+        }
+        val homeActivities = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.queryIntentActivities(
+                homeIntent,
+                PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            packageManager.queryIntentActivities(homeIntent, PackageManager.MATCH_DEFAULT_ONLY)
+        }
+        val systemHome = homeActivities.firstOrNull {
+            it.activityInfo?.packageName?.let { activityPackage -> activityPackage != packageName } == true
+        }?.activityInfo
+
+        if (systemHome == null) {
+            Toast.makeText(
+                this,
+                "Tela inicial do Android não encontrada",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+
+        val explicitHomeIntent = Intent(homeIntent).apply {
+            component = ComponentName(systemHome.packageName, systemHome.name)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(explicitHomeIntent)
+        finish()
     }
 
     private fun createInfoTextView(): TextView = TextView(this).apply {

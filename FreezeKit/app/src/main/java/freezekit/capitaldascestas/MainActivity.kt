@@ -35,6 +35,7 @@ import android.widget.Toast
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import freezekit.capitaldascestas.config.BrowserConfig
+import freezekit.capitaldascestas.kiosk.KioskManager
 import freezekit.capitaldascestas.web.BrowserUrlPolicy
 import java.io.ByteArrayInputStream
 
@@ -106,6 +107,10 @@ class MainActivity : Activity() {
             webView.onResume()
             hideSystemBars()
             grantCameraPermissionIfDeviceOwner()
+            val kioskManager = KioskManager(this)
+            if (isDeviceOwner() && kioskManager.isKioskEnabled()) {
+                kioskManager.entrarNoQuiosque()
+            }
         }
     }
 

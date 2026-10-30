@@ -1,163 +1,154 @@
-# FreezeKit — Etapa 2
+# FreezeKit — Etapa 3
 
-Esta versão parte do projeto aprovado da Etapa 1 e implementa o navegador interno previsto para os requisitos RF-08 a RF-13. O app abre o CONFER em uma WebView, só permite navegação para HTTPS nos hosts configurados e mantém um painel de status provisório acessível por ADB.
+## Como sair do quiosque se algo der errado
 
-**Fora do escopo desta etapa:** modo quiosque/Lock Task, tela inicial fixa, bloqueios do Android, TOTP, modo administrador, edição da configuração, registro de eventos e aplicação de política EFRP.
+**Saída normal de desenvolvimento:** conecte o tablet ao computador com Depuração USB autorizada. Abra o painel de emergência pelo ADB:
 
-## O que mudou
+```bat
+adb devices
+adb shell am start -n freezekit.capitaldascestas/.StatusActivity
+```
 
-O `applicationId` e o `namespace` continuam `freezekit.capitaldascestas`. A versão passou para `versionCode 2` e `versionName "0.2"`. Permanecem `minSdk 30`, `targetSdk 36`, `compileSdk 36`, Android Gradle Plugin 8.10.0, Kotlin 2.2.0, Gradle Wrapper 8.13, Gradle Kotlin DSL, `compilerOptions` com JVM 17 e `android:testOnly="true"`.
+No painel, toque em **Sair do quiosque (DEV)**. O app para o Lock Task, restaura a barra de status, remove a preferência de tela inicial, retira o FreezeKit da lista Lock Task e abre o launcher Android. O painel é uma Activity exportada do mesmo pacote que está na lista Lock Task, por isso pode ser iniciado explicitamente pelo ADB durante o quiosque.
 
-A configuração é lida por uma classe própria baseada em `SharedPreferences`. Se ainda não há valores salvos, a classe usa os padrões da especificação:
+**Se a tela não responder:** como este ZIP é um APK de desenvolvimento com `android:testOnly="true"`, no terminal do computador execute:
 
-- Página inicial: `https://confer.manus.space/`
-- Hosts de navegação: `confer.manus.space` e `precodebanana.manus.space`
-- Host autorizado para câmera: `confer.manus.space`
+```bat
+adb shell dpm remove-active-admin --user 0 freezekit.capitaldascestas/.AdminReceiver
+adb shell am task lock stop
+adb shell am start -a android.intent.action.MAIN -c android.intent.category.HOME
+```
 
-Não há tela para editar esses valores nesta etapa. O nome do host é comparado por igualdade completa, sem curingas ou aceitação de subdomínios; somente URLs HTTPS passam.
+A documentação oficial dos comandos ADB informa que `dpm remove-active-admin` exige `android:testOnly` e também remove Device Owners. Depois, a tela inicial HOME é aberta pelo terceiro comando.
 
-## Requisitos para compilar
+**INCERTEZA:** `adb shell am task lock stop` existe no código-fonte AOSP Android 16, mas não é uma API pública estável do SDK nem há garantia de que todo firmware de fabricante mantenha esse comando. Se ele falhar ou não estiver disponível no VAIO, o comando documentado `dpm remove-active-admin` é a saída de desenvolvimento a tentar primeiro; o cabo USB, o computador e a autorização de depuração precisam continuar acessíveis.
 
-- Windows com Android Studio instalado.
-- JDK 21 selecionado como **Gradle JDK** no Android Studio.
-- Android SDK Platform 36 instalado pelo SDK Manager.
-- Tablet VAIO TL10 conectado por USB com Depuração USB ativada e autorizada.
-- Internet na primeira compilação, para baixar Gradle e ferramentas/dependências do Android.
+Não distribua este APK de desenvolvimento como versão de produção. A remoção do Device Owner encerra a administração do app no tablet.
 
-## Abrir o projeto e gerar o APK de depuração
+## O que esta etapa implementa
 
-1. Extraia o ZIP. A pasta do projeto chama-se `FreezeKit`.
-2. No Android Studio, escolha **Open** e selecione a pasta `FreezeKit` extraída. Escolha a pasta raiz, onde estão `settings.gradle.kts` e `gradlew.bat`, e não a pasta `app`.
-3. Aguarde a sincronização. Se o Android Studio solicitar o Android SDK Platform 36, aceite a instalação.
-4. Em **File > Settings > Build, Execution, Deployment > Build Tools > Gradle > Gradle JDK**, selecione o JDK 21 usado no computador de desenvolvimento.
-5. No terminal do Android Studio, aberto na pasta raiz, execute:
+Esta versão parte do projeto Etapa 2 e implementa somente os requisitos RF-03 a RF-07: a `MainActivity` passa a ser a tela HOME preferida do Android; o próprio pacote é autorizado e iniciado em Lock Task; as funções de Lock Task são limitadas a `LOCK_TASK_FEATURE_KEYGUARD`; e o Device Owner desativa a barra de status. A tela de status provisória continua disponível para desenvolvimento e recebe os botões **Entrar no quiosque (DEV)** e **Sair do quiosque (DEV)**.
+
+O app só aplica políticas do quiosque se for Device Owner. Depois de configurar a allowlist, o código confere `isLockTaskPermitted()` antes de chamar `startLockTask()` para evitar que uma autorização ausente coloque o app em fixação de tela comum. Se não for Device Owner, a navegação da Etapa 2 continua funcionando sem chamar APIs de política do quiosque.
+
+**Fora do escopo:** bloqueios M5, TOTP, tela de administrador, configuração ou aplicação de política EFRP, novas permissões, restrições adicionais de usuário, configuração editável, logs e funções das etapas futuras. A consulta EFRP somente de leitura exibida pelo painel provisório é a função herdada da Etapa 1 e foi mantida sem alteração. Não foi adicionado nenhum bloqueio de sistema além de `setStatusBarDisabled(true)` e das funções de Lock Task pedidas nesta etapa.
+
+## Requisitos e versões preservados
+
+- Pacote e namespace: `freezekit.capitaldascestas`.
+- `minSdk 30`, `targetSdk 36`, `compileSdk 36`.
+- Android Gradle Plugin 8.10.0, Kotlin 2.2.0, Gradle Wrapper 8.13.
+- Gradle Kotlin DSL e `kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }`.
+- `android:testOnly="true"` e as três permissões que já existiam: INTERNET, ACCESS_NETWORK_STATE e CAMERA.
+- Versão do app: `versionCode 3`, `versionName "0.3"`.
+
+O MainActivity corrigido anexado pelo usuário foi usado como base, preservando o import `android.os.Build` e o callback de voltar com `OnBackInvokedDispatcher`.
+
+## Abrir e compilar
+
+1. Extraia o ZIP e abra no Android Studio a pasta raiz `FreezeKit` — a pasta que contém `settings.gradle.kts` e `gradlew.bat`.
+2. Use JDK 21 como Gradle JDK e instale Android SDK Platform 36 pelo SDK Manager, se necessário.
+3. No terminal do Android Studio, na pasta raiz, compile:
 
    ```bat
    .\gradlew.bat assembleDebug
    ```
 
-6. O APK será criado em:
+4. O APK será criado em:
 
    ```text
    app\build\outputs\apk\debug\app-debug.apk
    ```
 
-## Instalar ou atualizar no tablet
+O Gradle Wrapper está incluído. A primeira compilação precisa de internet para baixar Gradle e as dependências do Android.
 
-1. Confira a conexão USB:
+## Instalar ou atualizar
 
-   ```bat
-   adb devices
-   ```
+O tablet piloto já é Device Owner. Atualize o APK usando a mesma chave de depuração da instalação anterior:
 
-   O tablet deve aparecer como `device`; aceite a autorização de depuração na tela do tablet se ela aparecer.
+```bat
+adb devices
+adb install -t -r app\build\outputs\apk\debug\app-debug.apk
+```
 
-2. Instale ou atualize a versão de teste a partir da pasta raiz do projeto:
-
-   ```bat
-   adb install -t -r app\build\outputs\apk\debug\app-debug.apk
-   ```
-
-   `-t` é necessário por causa de `android:testOnly="true"`. `-r` atualiza a instalação existente. Para atualizar uma versão já instalada, compile e assine o APK com a mesma chave de depuração usada na Etapa 1.
-
-3. O app FreezeKit continua abrindo pela tela inicial. Também pode ser iniciado explicitamente:
-
-   ```bat
-   adb shell am start -n freezekit.capitaldascestas/.MainActivity
-   ```
-
-## Comandos Device Owner
-
-A Etapa 1 já deixou o tablet piloto como Device Owner. Ao instalar a atualização assinada com a mesma chave, **não execute `set-device-owner` novamente se o painel já indicar `SIM`**.
-
-Se estiver fazendo a primeira configuração em um tablet elegível, o comando é:
+Não execute `set-device-owner` novamente se o painel já mostrar `Device Owner: SIM`. Em um primeiro provisionamento de um tablet elegível, o comando seria:
 
 ```bat
 adb shell dpm set-device-owner --user 0 freezekit.capitaldascestas/.AdminReceiver
 ```
 
-O tablet deve estar sem contas e com um único usuário. O próprio Android pode recusar a operação se o estado do tablet não for elegível ou se já existir outro proprietário.
+A configuração de Device Owner deve ser feita com um único usuário e sem contas no tablet, conforme o procedimento de implantação.
 
-Para remover o Device Owner em um teste, use:
+## Como o quiosque funciona
 
-```bat
-adb shell dpm remove-active-admin --user 0 freezekit.capitaldascestas/.AdminReceiver
-```
+A `MainActivity` mantém o filtro `MAIN` com `LAUNCHER`, `HOME` e `DEFAULT`. Quando o app é Device Owner, `KioskManager.entrarNoQuiosque()` registra a `MainActivity` como HOME persistente para `MAIN + HOME + DEFAULT`, coloca somente `freezekit.capitaldascestas` na allowlist Lock Task, define somente `LOCK_TASK_FEATURE_KEYGUARD`, chama `setStatusBarDisabled(true)` e inicia `startLockTask()` quando a `MainActivity` entra em `onResume()`.
 
-Para desinstalar depois de removê-lo:
+O pacote autorizado contém tanto a `MainActivity` quanto a `StatusActivity`. Por isso, no build de desenvolvimento, o painel de status pode ser aberto explicitamente pelo ADB mesmo com Lock Task ativo. A Activity do painel está exportada e não possui filtro de launcher.
 
-```bat
-adb uninstall freezekit.capitaldascestas
-```
+O Lock Task permite apenas o app incluído na allowlist. O app não habilita HOME, OVERVIEW, NOTIFICATIONS, SYSTEM_INFO nem GLOBAL_ACTIONS. O recurso KEYGUARD permanece ligado para que a tela de bloqueio do Android continue disponível. Como GLOBAL_ACTIONS não está habilitado, o menu de ações globais obtido ao segurar o botão de energia pode não aparecer enquanto o quiosque estiver ativo; por isso, mantenha o caminho de recuperação por USB/ADB durante os testes.
 
-## Painel de status provisório
+Se o FreezeKit não for Device Owner, `KioskManager` retorna sem aplicar políticas. A tela e o navegador seguem o comportamento da Etapa 2.
 
-A `StatusActivity` não tem filtro de launcher e não deve aparecer como um ícone separado na lista de apps. Para abri-la pelo computador:
+## Botões DEV do painel de status
+
+Abra o painel pelo computador:
 
 ```bat
 adb shell am start -n freezekit.capitaldascestas/.StatusActivity
 ```
 
-Ela mantém as informações de status da Etapa 1, o botão **Atualizar** e dois botões temporários para testar URLs que precisam ser bloqueadas: Google e o subdomínio `teste.manus.space`. A tela principal recebe a tentativa e aplica a mesma verificação de navegação da WebView.
+- **Entrar no quiosque (DEV):** aplica as políticas de Device Owner e abre a `MainActivity`; é ela que chama `startLockTask()` no seu `onResume()`.
+- **Sair do quiosque (DEV):** chama `stopLockTask()`, restaura a barra de status, limpa a preferência HOME persistente e esvazia a lista Lock Task. Em seguida, o app abre a tela HOME Android que ficou disponível após remover a preferência do FreezeKit.
 
-## Como funciona a permissão de câmera
+A Activity que iniciou Lock Task é a que pode encerrá-lo diretamente com `stopLockTask()`. O botão também remove o pacote da allowlist por `DevicePolicyManager`, mecanismo que permite ao Device Owner encerrar remotamente o Lock Task; assim a saída não depende apenas de chamar `stopLockTask()` a partir do painel.
 
-Quando o app é Device Owner, ele pede ao `DevicePolicyManager` para conceder `CAMERA` ao próprio FreezeKit. Quando não é Device Owner e uma página autorizada solicita vídeo, o Android mostra o diálogo normal de permissão de câmera. A WebView só recebe `RESOURCE_VIDEO_CAPTURE` se a origem for HTTPS e o host estiver na lista de hosts com câmera. Se a página pedir vídeo junto com áudio, o app concede somente vídeo; microfone e todos os outros recursos são negados.
+## Roteiro de teste RF-03 a RF-07
 
-A chamada de grant para Device Owner e a permissão normal do Android autorizam o app a usar a câmera. O app não acessa nem grava imagens por conta própria; o recurso é concedido à página através da WebView conforme a origem permitida.
+1. **RF-03 — tela HOME fixa:** depois de instalar a versão 0.3 com Device Owner, volte à tela inicial do tablet. A `MainActivity` deve abrir como HOME, sem seletor de launcher. Confirme também que o FreezeKit ainda aparece como app no launcher pelo filtro `LAUNCHER` quando fora do Lock Task.
+2. **RF-04 — Lock Task:** confirme que o CONFER abre e que o HOME e os apps recentes não permitem sair do app. Somente o pacote FreezeKit deve estar na allowlist. Abra o painel de desenvolvimento via ADB para confirmar que ele é iniciado no mesmo pacote permitido.
+3. **RF-05 — tela de bloqueio:** com uma senha Android já configurada, pressione o botão de energia para apagar a tela e depois desbloqueie com a senha. O quiosque deve voltar ao CONFER.
+4. **RF-06 — barra e energia:** tente puxar a barra superior; ela não deve abrir. Verifique que não aparece um botão de energia no menu de Lock Task. O menu global do botão de energia também não foi habilitado, conforme a lista de recursos solicitada; use a saída por ADB se precisar sair durante o teste.
+5. **RF-07 — retorno ao app:** em um teste controlado, reinicie o tablet com o quiosque ativo e confirme que a HOME preferida abre o FreezeKit e o `onResume()` reaplica o Lock Task. Não faça teste de travamento no tablet de produção sem manter um computador conectado para recuperação.
+6. **Entrada e saída DEV:** inicie `StatusActivity` com `adb shell am start -n freezekit.capitaldascestas/.StatusActivity`. Toque em **Sair do quiosque (DEV)**: deve voltar à HOME Android. Abra novamente o painel por ADB, toque em **Entrar no quiosque (DEV)** e confirme que a `MainActivity` abre e fica bloqueada.
+7. **Sem Device Owner:** somente em um tablet de teste, remova o Device Owner via ADB e abra o FreezeKit. Ele deve funcionar como navegador da Etapa 2; as chamadas Lock Task, preferência persistente HOME e status bar do quiosque não devem ser executadas.
 
-## Roteiro de teste no tablet — itens 1 a 11
+## Comandos de desenvolvimento
 
-1. **Tela principal, fullscreen, JavaScript e DOM Storage:** abra FreezeKit. Deve aparecer o CONFER, sem barras de status/navegação. Faça um gesto de borda: o Android pode mostrar as barras temporariamente e ocultá-las de novo. Confirme que a página carrega e mantém o comportamento web necessário do CONFER.
+Para abrir o painel:
 
-2. **Configuração padrão:** abra FreezeKit após instalar. Deve iniciar em `https://confer.manus.space/`. A navegação para `precodebanana.manus.space` deve funcionar quando iniciada pelo CONFER. A lista é configurada por `BrowserConfig`/`SharedPreferences` e ainda não tem editor nesta etapa.
+```bat
+adb shell am start -n freezekit.capitaldascestas/.StatusActivity
+```
 
-3. **HTTPS e igualdade exata do host:** abra o painel provisório pelo comando ADB abaixo e toque em **Testar bloqueio do Google** e **Testar bloqueio do subdomínio**. Em ambos os casos, a página não deve abrir e deve aparecer somente o aviso **Endereço não permitido**, sem o URL. O primeiro botão testa um host externo; o segundo confirma que `teste.manus.space` não é aceito como curinga de `*.manus.space`.
+Para remover o Device Owner em um teste (`testOnly` precisa permanecer no Manifest):
 
-   ```bat
-   adb shell am start -n freezekit.capitaldascestas/.StatusActivity
-   ```
+```bat
+adb shell dpm remove-active-admin --user 0 freezekit.capitaldascestas/.AdminReceiver
+```
 
-4. **Links `target=_blank` e `window.open`:** no CONFER, abra a página secundária permitida. Ela deve substituir a página na mesma WebView, sem janela nova; use o botão Voltar do Android para retornar. Se o link apontar para um host não permitido, deve ser bloqueado pelo mesmo aviso genérico.
+Para registrar novamente o Device Owner em um tablet de teste elegível:
 
-5. **Câmera e microfone:** com Device Owner ativo, abra a função de leitura de código do CONFER; a permissão `CAMERA` deve estar concedida pelo `DevicePolicyManager` e o vídeo deve funcionar. Confirme que o app não solicita microfone. Para testar o fluxo sem Device Owner, remova-o temporariamente, revogue a permissão de câmera e abra a função de câmera; o Android deve pedir a permissão normal. Depois, conceda-a ou negue-a e confira o comportamento. Não tente abrir um host que não esteja na lista de câmera: a solicitação deve ser negada.
+```bat
+adb shell dpm set-device-owner --user 0 freezekit.capitaldascestas/.AdminReceiver
+```
 
-   ```bat
-   adb shell dpm remove-active-admin --user 0 freezekit.capitaldascestas/.AdminReceiver
-   adb shell pm revoke freezekit.capitaldascestas android.permission.CAMERA
-   ```
+Depois de remover o Device Owner, a desinstalação é:
 
-   Depois do teste sem Device Owner, se o tablet estiver elegível e você quiser restaurar o estado da Etapa 1:
-
-   ```bat
-   adb shell dpm set-device-owner --user 0 freezekit.capitaldascestas/.AdminReceiver
-   ```
-
-6. **Downloads, seletor de arquivos e pressão longa:** em um formulário ou link disponível no CONFER, tente anexar arquivo, baixar arquivo e manter o dedo pressionado sobre um link. O app não deve abrir seletor, iniciar download nem mostrar o menu de pressão longa.
-
-7. **Sem conexão e recuperação:** com a página aberta, desligue o Wi-Fi. Se a página principal falhar, deve aparecer **Sem conexão com a internet**, sem mostrar nenhum endereço. Ligue o Wi-Fi novamente e aguarde a rede recuperar conectividade; a WebView deve recarregar a última página autorizada automaticamente.
-
-8. **Saída do processo de renderização da WebView:** o callback `onRenderProcessGone` cria outra WebView e tenta carregar a página inicial. O app não contém botão para provocar uma falha artificial, porque isso seria um recurso de teste fora do escopo solicitado. Para um teste dinâmico, é necessário um harness/ferramenta de depuração que encerre apenas o renderer da WebView. `adb shell am force-stop` encerra o processo do app e **não** testa esse callback. Sem esse harness, confira a implementação e valide a recuperação em teste instrumentado antes da implantação.
-
-9. **Proteções da WebView:** confirme que a navegação só aceita HTTPS e host exato; HTTP e esquemas não HTTPS são barrados. O código também mantém acesso a arquivos e conteúdo local desativado, conteúdo misto bloqueado, geolocalização negada, nenhuma interface JavaScript registrada e Safe Browsing ativado. Um teste manual não deve tentar abrir arquivos locais nem usar uma página de phishing real; confira essas configurações no código/build.
-
-10. **Botão Voltar:** navegue do CONFER para a página secundária permitida e pressione Voltar: deve retornar no histórico da WebView. Na página inicial, pressione Voltar sem histórico: o app deve permanecer aberto e não deve sair para a tela inicial.
-
-11. **StatusActivity sem launcher e botões de teste:** confirme que o app normal abre o navegador e que não há um segundo ícone do painel. Execute `adb shell am start -n freezekit.capitaldascestas/.StatusActivity`; o painel deve exibir versão do app, Android/API, Device Owner e EFRP. Toque nos dois botões de teste: cada endereço deve ser bloqueado pelo aviso genérico. Para testar o segundo botão depois que a MainActivity foi aberta, execute novamente o comando ADB do painel.
+```bat
+adb uninstall freezekit.capitaldascestas
+```
 
 ## Arquivos principais
 
-- `MainActivity.kt`: WebView fullscreen, política de navegação, câmera, tela offline, recuperação do renderer e botão Voltar.
-- `StatusActivity.kt`: painel provisório da Etapa 1 e botões de teste RF-09, sem entrada de launcher.
-- `config/BrowserConfig.kt`: configuração persistida em `SharedPreferences` com os valores padrão da especificação.
-- `web/BrowserUrlPolicy.kt`: validação de esquema HTTPS e igualdade exata dos hosts.
-- `AndroidManifest.xml`: permissões INTERNET, ACCESS_NETWORK_STATE e CAMERA, atividades e receptor administrativo.
-- `app/build.gradle.kts`: pacote, SDKs, `versionCode 2`, `versionName 0.2` e alvo de compilação do Kotlin.
-- `AdminReceiver.kt` e `res/xml/device_admin.xml`: base Device Owner preservada da Etapa 1.
-- `gradle/wrapper/`, `gradlew` e `gradlew.bat`: Gradle Wrapper 8.13.
+- `app/src/main/java/freezekit/capitaldascestas/MainActivity.kt`: navegador da Etapa 2 baseado no arquivo corrigido anexado, mais a entrada no quiosque no `onResume()` quando Device Owner.
+- `app/src/main/java/freezekit/capitaldascestas/kiosk/KioskManager.kt`: centraliza as operações `entrarNoQuiosque()` e `sairDoQuiosque()`.
+- `app/src/main/java/freezekit/capitaldascestas/StatusActivity.kt`: painel provisório e botões de teste/saída DEV.
+- `app/src/main/AndroidManifest.xml`: preserva as permissões existentes e adiciona HOME/DEFAULT ao filtro da MainActivity, mantendo LAUNCHER.
+- `app/build.gradle.kts`: conserva as versões técnicas e atualiza `versionCode`/`versionName` para 3/0.3.
+- `config/BrowserConfig.kt` e `web/BrowserUrlPolicy.kt`: configuração e validação de URL da Etapa 2.
+- `AdminReceiver.kt` e `res/xml/device_admin.xml`: receptor Device Owner preservado.
+- `gradle/wrapper/`, `gradlew` e `gradlew.bat`: Wrapper Gradle 8.13.
 
-## APIs públicas e limites conhecidos
+## Documentação Android
 
-A navegação usa as APIs públicas de WebView/WebSettings/WebViewClient/WebChromeClient; a câmera usa `DevicePolicyManager.setPermissionGrantState` quando o app é Device Owner e a solicitação normal da Activity quando não é. A consulta EFRP do painel continua sendo somente leitura. O método pode retornar `null` se ainda não houver política EFRP configurada; isso não é alterado nesta etapa.
-
-O teste de `onRenderProcessGone` precisa de um ambiente de teste que encerre especificamente o renderer da WebView; não foi incluído um botão artificial no app. O ambiente de geração deste ZIP não tem o compilador Java (`javac`) e o Android SDK Platform 36 necessários para executar `assembleDebug`; valide a compilação no Android Studio/JDK 21 da máquina de desenvolvimento.
+As APIs usadas são públicas e documentadas: [Lock task mode para dedicated devices](https://developer.android.com/work/dpc/dedicated-devices/lock-task-mode), [DevicePolicyManager](https://developer.android.com/reference/android/app/admin/DevicePolicyManager), [Activity](https://developer.android.com/reference/android/app/Activity) e [ADB e comandos DPM](https://developer.android.com/tools/adb). O comando `am task lock stop` é tratado separadamente como incerto porque é um comando de shell, não uma API pública estável do SDK.
