@@ -8,6 +8,8 @@ import android.text.InputType
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
+import freezekit.capitaldascestas.log.EventLog
+import freezekit.capitaldascestas.log.EventType
 import freezekit.capitaldascestas.security.AdminSession
 import freezekit.capitaldascestas.security.SecurityStore
 import freezekit.capitaldascestas.security.SecretUnavailableException
@@ -106,18 +108,40 @@ class AccessCodeActivity : Activity() {
         }
 
         if (accepted) {
+            EventLog.record(
+                this,
+                if (recoveryMode) EventType.AUTH_RECOVERY_CORRECT else EventType.AUTH_TOTP_CORRECT,
+                "source=access"
+            )
             if (!store.recordSuccessfulAuthentication()) {
                 statusText.text = "Não foi possível confirmar o armazenamento seguro. Tente novamente."
                 return
             }
             AdminSession.start(recoveryAuthenticated = recoveryMode)
+            EventLog.record(
+                this,
+                EventType.ADMIN_SESSION_STARTED,
+                "method=${if (recoveryMode) "recovery" else "totp"}"
+            )
             startActivity(android.content.Intent(this, AdminActivity::class.java))
             finish()
             return
         }
 
         codeField.setText("")
+        EventLog.record(
+            this,
+            if (recoveryMode) EventType.AUTH_RECOVERY_INCORRECT else EventType.AUTH_TOTP_INCORRECT,
+            "source=access"
+        )
         val updated = store.recordFailedAuthentication()
+        if (updated.retryAfterMillis > 0L) {
+            EventLog.record(
+                this,
+                EventType.AUTH_LOCKOUT_STARTED,
+                "duration=${ceilSeconds(updated.retryAfterMillis)}s"
+            )
+        }
         statusText.text = if (updated.retryAfterMillis > 0L) {
             "Aguarde para tentar novamente."
         } else {

@@ -13,6 +13,8 @@ import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import freezekit.capitaldascestas.kiosk.KioskManager
+import freezekit.capitaldascestas.log.EventLog
+import freezekit.capitaldascestas.log.EventType
 import freezekit.capitaldascestas.security.AdminSession
 import freezekit.capitaldascestas.security.AdminSessionActivity
 import freezekit.capitaldascestas.security.QrCodeRenderer
@@ -332,13 +334,25 @@ class SetupWizardActivity : AdminSessionActivity() {
                 return
             }
             if (!store.confirmPendingTotp(code)) {
+                EventLog.record(this, EventType.AUTH_TOTP_INCORRECT, "source=wizard")
                 val updated = store.recordFailedAuthentication()
+                if (updated.retryAfterMillis > 0L) {
+                    EventLog.record(
+                        this,
+                        EventType.AUTH_LOCKOUT_STARTED,
+                        "duration=${ceilSeconds(updated.retryAfterMillis)}s"
+                    )
+                }
                 message.text = if (updated.retryAfterMillis > 0L) {
                     "Código incorreto. Aguarde ${ceilSeconds(updated.retryAfterMillis)} s."
                 } else {
                     "Código incorreto. Restam ${updated.attemptsUntilLockout} tentativa(s) antes da espera."
                 }
                 return
+            }
+            EventLog.record(this, EventType.AUTH_TOTP_CORRECT, "source=wizard")
+            if (reconfigure) {
+                EventLog.record(this, EventType.TOTP_RECONFIGURED, "source=admin")
             }
             if (!store.recordSuccessfulAuthentication()) {
                 message.text = "Não foi possível atualizar a proteção contra tentativas. Tente novamente."
@@ -412,6 +426,9 @@ class SetupWizardActivity : AdminSessionActivity() {
         if (generated == null) {
             message.text = "Não foi possível salvar o hash do código. Tente novamente."
         } else {
+            if (reconfigure) {
+                EventLog.record(this, EventType.RECOVERY_RECONFIGURED, "source=admin")
+            }
             message.text = "Salve agora; o tablet guardou somente o hash:\n\n$generated"
         }
     }
@@ -423,6 +440,9 @@ class SetupWizardActivity : AdminSessionActivity() {
         replaceExistingCode: Boolean
     ) {
         if (store.saveExistingRecoveryCode(value, replaceExistingCode)) {
+            if (reconfigure) {
+                EventLog.record(this, EventType.RECOVERY_RECONFIGURED, "source=admin")
+            }
             field.setText("")
             message.text = "Código configurado. O texto não foi guardado no tablet."
         } else {
@@ -441,6 +461,9 @@ class SetupWizardActivity : AdminSessionActivity() {
         body.addView(message, UiSupport.matchWrap(this, 8))
         UiSupport.addButton(body, this, "Abrir tela para definir senha Android") {
             val result = freezekit.capitaldascestas.system.SystemSettingsLauncher.openAndroidPassword(this)
+            if (result.launched) {
+                EventLog.record(this, EventType.PASSWORD_SETTINGS_OPENED, "source=wizard")
+            }
             if (!result.launched) message.text = result.message ?: "Não foi possível abrir a tela de senha."
         }
         UiSupport.addButton(body, this, "Já está configurada — continuar") {
@@ -497,7 +520,7 @@ class SetupWizardActivity : AdminSessionActivity() {
                 return@addButton
             }
             val kiosk = KioskManager(this)
-            if (!kiosk.entrarNoQuiosque()) {
+            if (!kiosk.entrarNoQuiosque(reason = "assistant")) {
                 message.text = "Não foi possível ativar o quiosque. Confira Device Owner e Lock Task."
                 return@addButton
             }
@@ -505,6 +528,7 @@ class SetupWizardActivity : AdminSessionActivity() {
                 message.text = "O quiosque foi ativado, mas não foi possível salvar a conclusão. Tente novamente."
                 return@addButton
             }
+            EventLog.record(this, EventType.WIZARD_COMPLETED)
             finish()
         }
     }

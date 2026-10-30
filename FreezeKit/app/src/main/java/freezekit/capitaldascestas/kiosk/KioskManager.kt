@@ -8,6 +8,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import freezekit.capitaldascestas.AdminReceiver
 import freezekit.capitaldascestas.MainActivity
+import freezekit.capitaldascestas.log.EventLog
+import freezekit.capitaldascestas.log.EventType
 import java.lang.ref.WeakReference
 
 class KioskManager(private val activity: Activity) {
@@ -24,7 +26,7 @@ class KioskManager(private val activity: Activity) {
     fun setKioskEnabled(enabled: Boolean): Boolean =
         preferences.edit().putBoolean(KEY_KIOSK_ENABLED, enabled).commit()
 
-    fun entrarNoQuiosque(): Boolean {
+    fun entrarNoQuiosque(reason: String? = null): Boolean {
         if (!setKioskEnabled(true)) return false
         if (!isDeviceOwner()) return false
 
@@ -60,6 +62,10 @@ class KioskManager(private val activity: Activity) {
                     )
                 )
             }
+            if (reason == "administrator" || reason == "assistant") {
+                val eventReason = if (reason == "administrator") "administrador" else "assistente"
+                EventLog.record(activity, EventType.KIOSK_ENTERED, "reason=$eventReason")
+            }
             true
         } catch (_: SecurityException) {
             false
@@ -68,7 +74,7 @@ class KioskManager(private val activity: Activity) {
         }
     }
 
-    fun sairDoQuiosque(): Boolean {
+    fun sairDoQuiosque(reason: String = "administrator"): Boolean {
         val stateSaved = setKioskEnabled(false)
         if (!isDeviceOwner()) return false
 
@@ -83,6 +89,10 @@ class KioskManager(private val activity: Activity) {
                 activity.packageName
             )
             devicePolicyManager.setLockTaskPackages(adminComponent, emptyArray<String>())
+            if (stateSaved && (reason == "administrator" || reason == "assistant")) {
+                val eventReason = if (reason == "administrator") "administrador" else "assistente"
+                EventLog.record(activity, EventType.KIOSK_EXITED, "reason=$eventReason")
+            }
             stateSaved
         } catch (_: SecurityException) {
             false

@@ -15,6 +15,8 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.MotionEvent
 import android.view.ViewConfiguration
 import android.view.Gravity
@@ -42,6 +44,8 @@ import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import freezekit.capitaldascestas.config.BrowserConfig
 import freezekit.capitaldascestas.kiosk.KioskManager
+import freezekit.capitaldascestas.log.EventLog
+import freezekit.capitaldascestas.log.EventType
 import freezekit.capitaldascestas.security.SecurityStore
 import freezekit.capitaldascestas.web.BrowserUrlPolicy
 import java.io.ByteArrayInputStream
@@ -57,7 +61,7 @@ class MainActivity : Activity() {
     private lateinit var connectivityManager: ConnectivityManager
 
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    private var internetValidated = false
+    private var internetValidated: Boolean? = null
     private var offlineMessageVisible = false
     private var retryUrl: String? = null
     private var pendingCameraRequest: PermissionRequest? = null
@@ -71,10 +75,23 @@ class MainActivity : Activity() {
     private var pointerDownY = 0f
     private var suppressSetupWizardOnResume = false
     private var setupTestOverlay: View? = null
+    private val eventLogMaintenanceHandler = Handler(Looper.getMainLooper())
+    private val dailyEventLogMaintenance = object : Runnable {
+        override fun run() {
+            EventLog.maintainIfDue(applicationContext)
+            eventLogMaintenanceHandler.postDelayed(this, EventLog.MAINTENANCE_INTERVAL_MS)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         activeActivity = WeakReference(this)
+        EventLog.initialize(this)
+        EventLog.record(this, EventType.APP_STARTED)
+        eventLogMaintenanceHandler.postDelayed(
+            dailyEventLogMaintenance,
+            EventLog.MAINTENANCE_INTERVAL_MS
+        )
 
         config = BrowserConfig(this)
         urlPolicy = BrowserUrlPolicy(config)
@@ -126,6 +143,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        EventLog.maintainIfDue(this)
         if (::webView.isInitialized) {
             webView.onResume()
             hideSystemBars()
@@ -158,6 +176,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        eventLogMaintenanceHandler.removeCallbacks(dailyEventLogMaintenance)
         pendingCameraRequest?.deny()
         pendingCameraRequest = null
         if (activeActivity?.get() === this) activeActivity = null
@@ -272,6 +291,7 @@ class MainActivity : Activity() {
             request: WebResourceRequest
         ): WebResourceResponse? {
             if (request.isForMainFrame && !urlPolicy.isAllowed(request.url)) {
+                recordBlockedAddress(request.url)
                 showBlockedAddressNotice()
                 return WebResourceResponse(
                     "text/plain",
@@ -322,6 +342,11 @@ class MainActivity : Activity() {
             if (view !== webView) {
                 return false
             }
+            EventLog.record(
+                this@MainActivity,
+                EventType.BROWSER_RENDERER_RECOVERED,
+                "crashed=${detail.didCrash()}"
+            )
             recreateWebViewAfterRendererExit(view)
             return true
         }
@@ -358,8 +383,17 @@ class MainActivity : Activity() {
         if (urlPolicy.isAllowed(uri)) {
             return false
         }
+        recordBlockedAddress(uri)
         showBlockedAddressNotice()
         return true
+    }
+
+    private fun recordBlockedAddress(uri: Uri) {
+        EventLog.record(
+            this,
+            EventType.BROWSER_ADDRESS_BLOCKED,
+            "host=${uri.host ?: "host_indisponivel"}"
+        )
     }
 
     private fun loadUrlIfAllowed(url: String) {
@@ -367,6 +401,7 @@ class MainActivity : Activity() {
             retryUrl = url
             webView.loadUrl(url)
         } else {
+            recordBlockedAddress(Uri.parse(url))
             showBlockedAddressNotice()
         }
     }
@@ -587,28 +622,47 @@ class MainActivity : Activity() {
                         networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
 
                 runOnUiThread {
-                    val wasValidated = internetValidated
-                    internetValidated = hasValidatedInternet
-                    if (hasValidatedInternet && offlineMessageVisible) {
-                        retryAfterNetworkReturns()
-                    } else if (!hasValidatedInternet && wasValidated) {
-                        rememberCurrentPageForRetry()
-                        showOfflineMessage()
-                    }
+                    updateConnectivityState(hasValidatedInternet)
                 }
             }
 
             override fun onLost(network: Network) {
                 runOnUiThread {
-                    internetValidated = false
-                    rememberCurrentPageForRetry()
-                    showOfflineMessage()
+                    updateConnectivityState(currentDefaultNetworkHasValidatedInternet())
                 }
             }
         }
 
+        if (internetValidated == null) {
+            internetValidated = currentDefaultNetworkHasValidatedInternet()
+        }
         connectivityManager.registerDefaultNetworkCallback(callback)
         networkCallback = callback
+    }
+
+    private fun currentDefaultNetworkHasValidatedInternet(): Boolean {
+        val active = connectivityManager.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(active) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+
+    private fun updateConnectivityState(hasValidatedInternet: Boolean) {
+        val previousState = internetValidated
+        internetValidated = hasValidatedInternet
+        if (previousState == null || previousState == hasValidatedInternet) {
+            if (hasValidatedInternet && offlineMessageVisible) retryAfterNetworkReturns()
+            return
+        }
+
+        if (hasValidatedInternet) {
+            EventLog.record(this, EventType.NETWORK_CONNECTION_RESTORED)
+            if (offlineMessageVisible) retryAfterNetworkReturns()
+        } else {
+            EventLog.record(this, EventType.NETWORK_CONNECTION_LOST)
+            rememberCurrentPageForRetry()
+            showOfflineMessage()
+        }
     }
 
     private fun stopNetworkMonitoring() {

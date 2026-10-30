@@ -25,16 +25,17 @@ abstract class AdminSessionActivity : Activity() {
     private var receiverRegistered = false
     private val screenOffReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == Intent.ACTION_SCREEN_OFF) expireAdminSession()
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) expireAdminSession("screen_off")
         }
     }
-    private val timeoutRunnable = Runnable { expireAdminSession() }
+    private val timeoutRunnable = Runnable { expireAdminSession("expired") }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (requiresAdminSession) {
             if (!AdminSession.isActive()) {
                 adminSessionValidAtCreate = false
+                AdminSession.end(this, "expired")
                 finish()
                 return
             }
@@ -48,7 +49,7 @@ abstract class AdminSessionActivity : Activity() {
         super.onResume()
         if (requiresAdminSession && adminSessionValidAtCreate) {
             if (!AdminSession.isActive()) {
-                expireAdminSession()
+                expireAdminSession("expired")
                 return
             }
             KioskManager(this).restoreLockTaskPackagesIfNeeded()
@@ -60,9 +61,8 @@ abstract class AdminSessionActivity : Activity() {
         if (requiresAdminSession && adminSessionValidAtCreate &&
             event.actionMasked == MotionEvent.ACTION_DOWN
         ) {
-            AdminSession.registerTouch()
-            if (!AdminSession.isActive()) {
-                expireAdminSession()
+            if (!AdminSession.registerTouch()) {
+                expireAdminSession("expired")
                 return false
             }
             scheduleTimeout()
@@ -89,12 +89,12 @@ abstract class AdminSessionActivity : Activity() {
     }
 
     protected open fun onAdminBack() {
-        if (requiresAdminSession) expireAdminSession() else finish()
+        if (requiresAdminSession) expireAdminSession("back") else finish()
     }
 
-    protected fun expireAdminSession() {
+    protected fun expireAdminSession(reason: String = "manual_exit") {
         if (requiresAdminSession) {
-            AdminSession.clear()
+            AdminSession.end(this, reason)
             KioskManager(this).restoreLockTaskPackagesIfNeeded()
         }
         if (!isFinishing) finish()
@@ -103,7 +103,7 @@ abstract class AdminSessionActivity : Activity() {
     private fun scheduleTimeout() {
         handler.removeCallbacks(timeoutRunnable)
         val remaining = AdminSession.remainingMillis()
-        if (remaining <= 0L) expireAdminSession()
+        if (remaining <= 0L) expireAdminSession("expired")
         else handler.postDelayed(timeoutRunnable, remaining)
     }
 
